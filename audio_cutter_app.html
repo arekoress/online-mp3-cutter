@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Cutter</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      text-align: center;
+      background-color: #fff;
+      margin: 0;
+      padding: 0;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 60px 20px;
+    }
+    h1 {
+      font-size: 40px;
+      font-weight: bold;
+    }
+    .subtitle {
+      font-size: 18px;
+      margin-bottom: 30px;
+    }
+    .upload-btn {
+      background-color: #1677ff;
+      color: white;
+      border: none;
+      padding: 14px 28px;
+      font-size: 16px;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+    .drop-info {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #888;
+    }
+    #audio-player {
+      margin-top: 30px;
+      display: none;
+    }
+    .controls {
+      margin-top: 20px;
+      display: none;
+    }
+    input[type=range] {
+      width: 80%;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Audio Cutter</h1>
+    <div class="subtitle">온라인에서 오디오 파일 자르기 또는 자르기</div>
+    <input type="file" id="file-input" accept="audio/*" style="display:none">
+    <button class="upload-btn" onclick="document.getElementById('file-input').click()">파일 열기</button>
+    <div class="drop-info">또는 여기에 파일을 드롭</div>
+
+    <audio id="audio-player" controls></audio>
+
+    <div class="controls">
+      <p>시작 시간 (초): <input type="number" id="start-time" min="0" step="0.1"></p>
+      <p>종료 시간 (초): <input type="number" id="end-time" min="0" step="0.1"></p>
+      <button onclick="trimAudio()">자르기</button>
+      <a id="download-link" style="display:none" download="trimmed_audio.wav">다운로드</a>
+    </div>
+  </div>
+
+  <script>
+    let audioContext;
+    let audioBuffer;
+
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const arrayBuffer = await file.arrayBuffer();
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+      const audioURL = URL.createObjectURL(file);
+      const player = document.getElementById('audio-player');
+      player.src = audioURL;
+      player.style.display = 'block';
+      document.querySelector('.controls').style.display = 'block';
+    });
+
+    async function trimAudio() {
+      const start = parseFloat(document.getElementById('start-time').value);
+      const end = parseFloat(document.getElementById('end-time').value);
+      if (isNaN(start) || isNaN(end) || start >= end) return alert('잘못된 시간 범위입니다.');
+
+      const length = (end - start) * audioBuffer.sampleRate;
+      const trimmedBuffer = audioContext.createBuffer(
+        audioBuffer.numberOfChannels,
+        length,
+        audioBuffer.sampleRate
+      );
+
+      for (let i = 0; i < audioBuffer.numberOfChannels; i++) {
+        const channel = audioBuffer.getChannelData(i);
+        trimmedBuffer.copyToChannel(channel.slice(start * audioBuffer.sampleRate, end * audioBuffer.sampleRate), i);
+      }
+
+      const wavBlob = await bufferToWav(trimmedBuffer);
+      const downloadLink = document.getElementById('download-link');
+      downloadLink.href = URL.createObjectURL(wavBlob);
+      downloadLink.style.display = 'inline-block';
+      downloadLink.textContent = '잘린 오디오 다운로드';
+    }
+
+    async function bufferToWav(buffer) {
+      const length = buffer.length * buffer.numberOfChannels * 2 + 44;
+      const view = new DataView(new ArrayBuffer(length));
+
+      function writeString(view, offset, str) {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      }
+
+      function floatTo16BitPCM(output, offset, input) {
+        for (let i = 0; i < input.length; i++, offset += 2) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          output.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        }
+      }
+
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, length - 8, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, buffer.numberOfChannels, true);
+      view.setUint32(24, buffer.sampleRate, true);
+      view.setUint32(28, buffer.sampleRate * buffer.numberOfChannels * 2, true);
+      view.setUint16(32, buffer.numberOfChannels * 2, true);
+      view.setUint16(34, 16, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, length - 44, true);
+
+      let offset = 44;
+      for (let i = 0; i < buffer.numberOfChannels; i++) {
+        floatTo16BitPCM(view, offset, buffer.getChannelData(i));
+        offset += buffer.getChannelData(i).length * 2;
+      }
+
+      return new Blob([view], { type: 'audio/wav' });
+    }
+  </script>
+</body>
+</html>
